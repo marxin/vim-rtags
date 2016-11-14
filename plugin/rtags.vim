@@ -65,6 +65,7 @@ if g:rtagsUseDefaultMappings == 1
     noremap <Leader>rb :call rtags#JumpBack()<CR>
     noremap <Leader>rC :call rtags#FindSuperClasses()<CR>
     noremap <Leader>rc :call rtags#FindSubClasses()<CR>
+    noremap <Leader>rd :call rtags#Diagnostics()<CR>
 endif
 
 """
@@ -250,6 +251,46 @@ function! rtags#DisplayResults(results)
         endif
     endif
 endfunction
+
+"
+" param[in] results - Data get by rc diagnose command (XML format)
+"
+function! rtags#DisplayDiagnosticsResults(results)
+    exe 'sign unplace *'
+    exe 'sign define fixit text=FF texthl=FixIt'
+    exe 'sign define warning text=WW texthl=Warning'
+    exe 'sign define error text=EE texthl=Error'
+
+python3 << endpython
+import json
+import xml.etree.ElementTree as ET
+
+tree = ET.fromstring(vim.eval("a:results"))
+errors = tree.find('file').findall('error')
+
+quickfix_errors = []
+for i, e in enumerate(errors):
+    severity = e.get('severity')
+    if severity == 'skipped':
+        continue
+    line = e.get('line')
+    column = e.get('column')
+    message = e.get('message')
+    x = 'Semantic Issue: '
+    if message.startswith(x):
+        message = message[len(x):]
+
+    error_type = 'E' if severity == 'error' else 'W'
+
+    quickfix_errors.append({'lnum': line, 'col': column, 'nr': i, 'text': message, 'filename': name, 'type': error_type})
+    cmd = 'sign place %d line=%s name=%s file=%s' % (i + 1, line, severity, name)
+    vim.command(cmd)
+
+vim.command("call setqflist(%s, 'r')" % json.dumps(quickfix_errors))
+vim.command('cw')
+endpython
+endfunction
+
 
 function! rtags#getRcCmd()
     let cmd = g:rtagsRcCmd
@@ -674,6 +715,14 @@ endfunction
 function! rtags#FindSymbolsOfWordUnderCursor()
     let wordUnderCursor = expand("<cword>")
     call rtags#FindSymbols(wordUnderCursor)
+endfunction
+
+function! rtags#Diagnostics()
+    let args = {
+                \ '--diagnose' : expand("%:p"),
+                \ '--synchronous-diagnostics' : '' }
+
+    call rtags#ExecuteThen(args, [function('rtags#DisplayDiagnosticsResults')])
 endfunction
 
 "
